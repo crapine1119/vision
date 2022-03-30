@@ -9,24 +9,17 @@ import matplotlib.pyplot as plt
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import MinMaxScaler as mms
 import torch
-from torchvision import transforms
-from torchvision import models
 from torch import nn
-import torch.optim as opt
-import torch.optim.lr_scheduler as lr_scheduler
 from torch.utils.data import DataLoader,TensorDataset,Dataset
-import pytorch_lightning as pl
 from pytorch_lightning import Trainer, LightningModule
 from pytorch_lightning.loggers import TestTubeLogger as Tube
 from pytorch_lightning.callbacks.early_stopping import EarlyStopping
 from pytorch_lightning.callbacks import ModelCheckpoint,LearningRateMonitor
 import cv2 as cv
-import json
-sys.path.append(r'C:\Users\82109\PycharmProjects\PJ\5.Job\paper_recall\yolo_v1')
 import glob
 from tqdm import tqdm
 from torchvision.ops import nms
-from modules import *
+from yolo_v1.modules import *
 ##
 seed_everything(seed=42)
 
@@ -119,7 +112,7 @@ lr_monitor = LearningRateMonitor(logging_interval='epoch')
 
 print('Call trainer...')
 trainer=Trainer(callbacks=[checkpoint_callback, early_stopping, lr_monitor],
-                max_epochs=100,
+                max_epochs=1,
                 gpus = 2,
                 logger=tube,
                 deterministic=True, accelerator='dp', accumulate_grad_batches=2)
@@ -229,7 +222,6 @@ def nms_(out_box,out_score):
         #     ids_sorted = ids_sorted[1:]
             #x1[i]
             #torch.clamp(x1[i],min=)
-
 #
 def visualize(image, output, target, conf_threshold, prob_threshold, nms_threshold=0.1, cv_name='1'):
     image = image.permute(1, 2, 0).numpy()

@@ -208,26 +208,58 @@ def decode(output, target, conf_threshold = 0.2, prob_threshold=0.1):
         print(prob.max())
     return out_box,out_label,out_conf,out_score, bbox_target, label_target
 #
-def nms_(out_box,out_score):
+def nms(out_box,out_score,threshold=0.1):
     if len(out_box)>0:
         x1 = out_box[:, 0]
         y1 = out_box[:, 1]
         x2 = out_box[:, 2]
         y2 = out_box[:, 3]
-        areas = (x2-x1) * (y2-y1)
         _,ids_sorted = out_score.sort(0,descending=True)
         ids = []
-        # while ids_sorted.numel()>1:
-        #     i = ids_sorted[0].item()
-        #     ids_sorted = ids_sorted[1:]
-            #x1[i]
-            #torch.clamp(x1[i],min=)
+        while ids_sorted.numel()>1:
+            i = ids_sorted[0].item()
+            ids.append(i)
+            ids_sorted = ids_sorted[1:]
+            ious = get_iou(out_box[i].expand_as(out_box[ids_sorted]),out_box[ids_sorted])
+            ids_sorted = ids_sorted[ious<threshold]
+        return torch.LongTensor(ids)
+    return torch.LongTensor([])
 #
-def visualize(image, output, target, conf_threshold, prob_threshold, nms_threshold=0.1, cv_name='1'):
+
+
+
+def map(bbox_label, bbox_target, out_label, out_box, out_conf, num_classes=5):
+    """
+    :param bbox_label: int
+    :param bbox_target: {4,]
+    :param out_label: {N,}
+    :param out_conf: {N,}
+    :param out_box: {N,4}
+    :return:
+    """
+    out_detect = torch.cat([out_label.view(-1,1),
+                            out_box,
+                            out_conf.view(-1,1)],dim=1)
+
+    for c in range(num_classes):
+        # 해당 클래스만 선택
+        detects = out_detect[out_detect[:,0]==c]
+        # 몇개의 이미지가 ground truth에 있는지
+        npos = 1 # 1 object in 1 img
+        #
+        _,conf_ind = detects[:, -1].sort(descending=True)
+
+
+        TP = torch.zeros(len(detects))
+        FP = torch.zeros(len(detects))
+        for d in detects[conf_ind]
+
+#
+def visualize(image, output, target, conf_threshold, prob_threshold=0.005, nms_threshold=0.1, cv_name='1'):
     image = image.permute(1, 2, 0).numpy()
     image = cv.cvtColor(image,cv.COLOR_RGB2BGR)
 
-    out_box, out_label, out_conf, out_score, bbox_target,bbox_label = decode(output,target,conf_threshold=conf_threshold, prob_threshold=prob_threshold)
+    out_box, out_label, out_conf, out_score, bbox_target, bbox_label = decode(output,target,conf_threshold=conf_threshold, prob_threshold=prob_threshold)
     # Truth
     rx1, ry1, rx2, ry2 = (bbox_target * 448).int().tolist()
     image = cv.rectangle(image, (rx1, ry1), (rx2, ry2), [0, 0, 1], 2)

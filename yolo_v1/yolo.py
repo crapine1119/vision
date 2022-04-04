@@ -225,37 +225,7 @@ def nms(out_box,out_score,threshold=0.1):
         return torch.LongTensor(ids)
     return torch.LongTensor([])
 #
-
-
-
-def map(bbox_label, bbox_target, out_label, out_box, out_conf, num_classes=5):
-    """
-    :param bbox_label: int
-    :param bbox_target: {4,]
-    :param out_label: {N,}
-    :param out_conf: {N,}
-    :param out_box: {N,4}
-    :return:
-    """
-    out_detect = torch.cat([out_label.view(-1,1),
-                            out_box,
-                            out_conf.view(-1,1)],dim=1)
-
-    for c in range(num_classes):
-        # 해당 클래스만 선택
-        detects = out_detect[out_detect[:,0]==c]
-        # 몇개의 이미지가 ground truth에 있는지
-        npos = 1 # 1 object in 1 img
-        #
-        _,conf_ind = detects[:, -1].sort(descending=True)
-
-
-        TP = torch.zeros(len(detects))
-        FP = torch.zeros(len(detects))
-        for d in detects[conf_ind]
-
-#
-def visualize(image, output, target, conf_threshold, prob_threshold=0.005, nms_threshold=0.1, cv_name='1'):
+def visualize(image, output, target, conf_threshold, prob_threshold=0.002, nms_threshold=0.1, cv_name='1'):
     image = image.permute(1, 2, 0).numpy()
     image = cv.cvtColor(image,cv.COLOR_RGB2BGR)
 
@@ -295,6 +265,7 @@ def visualize(image, output, target, conf_threshold, prob_threshold=0.005, nms_t
 ##
 ref_ths = 0.02
 for n in np.random.randint(0,1430,10):
+    ##
     # img = tst_set[n]['img'].unsqueeze(0).cuda()
     # target = tst_set[n]['label']
     img = trn_set[n]['img'].unsqueeze(0).cuda()
@@ -313,10 +284,127 @@ for n in np.random.randint(0,1430,10):
     # else:
     #     print(label)
     image = img.detach().cpu().squeeze()
-    visualize(image, output, target, conf_threshold=0.5, prob_threshold=ref_ths, nms_threshold=0.0, cv_name=str(n))
-    #visualize(image, target, target, conf_threshold=0.2, prob_threshold=0.001, nms_threshold=0.5, cv_name=str(n))
+    #visualize(image, output, target, conf_threshold=0.5, prob_threshold=ref_ths, nms_threshold=0.0, cv_name=str(n))
+    visualize(image, target, target, conf_threshold=0.2, prob_threshold=0.001, nms_threshold=0.5, cv_name=str(n))
 
-##
+
+## batch test
+
+
+detects = {i: [] for i in range(num_classes)}
+targets = {i: [] for i in range(num_classes)}
+# seperate result as list
+def evaluate(image,target,prob_threshold=0.005):
+    fortest.eval()
+    output = fortest(image)
+    output = output.squeeze().detach().cpu()
+    for i in range(len(output)):
+        # bbox rescale, get conf score
+        out_box, out_label, out_conf, out_score, bbox_target, bbox_label = decode(output[i],target[i],conf_threshold=0.2, prob_threshold=prob_threshold)
+        targets[bbox_label-1].append([i,1]+bbox_target.tolist())
+
+        nms_ind = nms(out_box, out_score, threshold=0.1)
+        if len(nms_ind)>0:
+            out_box = out_box[nms_ind]
+            out_label = out_label[nms_ind]
+            out_conf = out_conf[nms_ind]
+            out_score = out_score[nms_ind]
+            # seperated by classes
+            for c in range(num_classes):
+                c_ind = out_label==c
+                l = c_ind.sum()
+                if l==0:
+                    continue
+
+                pred_c = torch.cat([out_conf[c_ind].view(-1,1),
+                                    out_box[c_ind].view(-1,4)],dim=1)
+                for tmp in pred_c:
+                    detects[c].append([i]+tmp.tolist())
+    return detects,targets
+
+for t in tst_loader:
+    image,target = t['img'].cuda(),t['label']
+    detects, targets = evaluate(image,target,prob_threshold=0.002)
+
+
+def ap(detects,targets, iou_threds=0.01):
+    """
+    :param detects: {class1 : [img index, prob, x1, y1, x2, y2], class2...}
+    :param targets: same
+    :return:
+    """
+    aps = []
+    for c in targets.keys():
+        if len(targets[c])==0:
+            aps.append(0.0)
+        # num ground_truth
+        n_grt = len(targets[c])
+        detect_c = detects[c].copy()
+
+        # get current image number & grt
+        grts = {i[0]: [i[2:]] for i in targets[c]}
+        grt_is_detect = {key:np.zeros(1) for key in grts} # 1 : num of grt in image
+        
+        # 검출한 이미지를 높은 prob 순으로
+        detect_c = sorted(detect_c, key=lambda x : x[1], reverse=True)
+        TP = np.zeros(len(detect_c))
+        FP = np.zeros(len(detect_c))
+
+        for d in range(len(detect_c)):
+            img_idx = detect_c[d][0]
+            # 해당 클래스를 grt와 동일한 이미지에서 예측한 경우
+            grt = grts[img_idx] if img_idx in grts.keys() else []
+            iou_max = -float('inf')
+            for e,g in enumerate(grt):
+                iou = get_iou(torch.FloatTensor(detect_c[d][2:]).unsqueeze(0),torch.FloatTensor(g).unsqueeze(0))
+                # print(iou)
+                if iou>iou_max:
+                    iou_max = iou
+                    grt_max = e
+
+            if iou_max>=iou_threds:
+                if grt_is_detect[img_idx][grt_max]==0:
+                    TP[d]=1
+                    grt_is_detect[img_idx][grt_max]=1
+                else:
+                    FP[d]=1
+            else:
+                FP[d]=1
+        tp_sum = np.cumsum(TP)
+        fp_sum = np.cumsum(FP)
+
+        recall = tp_sum/n_grt
+        prec = np.divide(tp_sum,tp_sum+fp_sum)
+
+        #@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@ get ap
+        recall = np.concatenate(([0.0], recall, [1.0]))
+        prec = np.concatenate(([0.0], prec, [0.0]))
+
+        for i in range(prec.size - 1, 0, -1):
+            prec[i - 1] = max(prec[i - 1], prec[i])
+
+        ap = 0.0  # average precision (AUC of the precision-recall curve).
+        for i in range(prec.size - 1):
+            ap += (recall[i + 1] - recall[i]) * prec[i + 1]
+        #
+        aps.append(ap)
+    return aps
+
+ans = ap(detects,targets, iou_threds=0.1)
+print(np.mean(ans))
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 

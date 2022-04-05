@@ -126,9 +126,7 @@ print('\t\tFitting is end...')
 
 best_pth = checkpoint_callback.kth_best_model_path
 ##
-
-
-best_pth = glob.glob(r'%s\checkpoints/*'%(glob.glob(r'C:\Users\82109\PycharmProjects\PJ\5.Job\paper_recall\yolo_v1\log/*')[-1]))[0]
+best_pth = glob.glob(r'%s\checkpoints/*'%(glob.glob(r'C:\Users\82109\PycharmProjects\object-detection\yolo_v1\log/*')[-1]))[0]
 #
 fortest = yolo_v1()
 fortest = fortest.load_from_checkpoint(best_pth)
@@ -263,13 +261,12 @@ def visualize(image, output, target, conf_threshold, prob_threshold=0.002, nms_t
 
     cv.imshow(cv_name, image)
 ##
-ref_ths = 0.02
-for n in np.random.randint(0,1430,10):
-    ##
-    # img = tst_set[n]['img'].unsqueeze(0).cuda()
-    # target = tst_set[n]['label']
-    img = trn_set[n]['img'].unsqueeze(0).cuda()
-    target = trn_set[n]['label']
+ref_ths = 0.01
+for n in np.random.randint(0,1430,5):
+    img = tst_set[n]['img'].unsqueeze(0).cuda()
+    target = tst_set[n]['label']
+    # img = trn_set[n]['img'].unsqueeze(0).cuda()
+    # target = trn_set[n]['label']
 
     fortest.eval()
     output = fortest(img)
@@ -284,8 +281,8 @@ for n in np.random.randint(0,1430,10):
     # else:
     #     print(label)
     image = img.detach().cpu().squeeze()
-    #visualize(image, output, target, conf_threshold=0.5, prob_threshold=ref_ths, nms_threshold=0.0, cv_name=str(n))
-    visualize(image, target, target, conf_threshold=0.2, prob_threshold=0.001, nms_threshold=0.5, cv_name=str(n))
+    visualize(image, output, target, conf_threshold=0.2, prob_threshold=ref_ths, nms_threshold=0.3, cv_name=str(n))
+    #visualize(image, target, target, conf_threshold=0.2, prob_threshold=0.001, nms_threshold=0.5, cv_name=str(n))
 
 
 ## batch test
@@ -294,7 +291,7 @@ for n in np.random.randint(0,1430,10):
 detects = {i: [] for i in range(num_classes)}
 targets = {i: [] for i in range(num_classes)}
 # seperate result as list
-def evaluate(image,target,prob_threshold=0.005):
+def evaluate(image,target,prob_threshold=0.005, nms_threshold=0.3):
     fortest.eval()
     output = fortest(image)
     output = output.squeeze().detach().cpu()
@@ -303,7 +300,7 @@ def evaluate(image,target,prob_threshold=0.005):
         out_box, out_label, out_conf, out_score, bbox_target, bbox_label = decode(output[i],target[i],conf_threshold=0.2, prob_threshold=prob_threshold)
         targets[bbox_label-1].append([i,1]+bbox_target.tolist())
 
-        nms_ind = nms(out_box, out_score, threshold=0.1)
+        nms_ind = nms(out_box, out_score, threshold=nms_threshold)
         if len(nms_ind)>0:
             out_box = out_box[nms_ind]
             out_label = out_label[nms_ind]
@@ -322,9 +319,9 @@ def evaluate(image,target,prob_threshold=0.005):
                     detects[c].append([i]+tmp.tolist())
     return detects,targets
 
-for t in tst_loader:
+for t in tqdm(tst_loader):
     image,target = t['img'].cuda(),t['label']
-    detects, targets = evaluate(image,target,prob_threshold=0.002)
+    detects, targets = evaluate(image,target,prob_threshold=0.01, nms_threshold=0.3)
 
 
 def ap(detects,targets, iou_threds=0.01):
@@ -390,24 +387,8 @@ def ap(detects,targets, iou_threds=0.01):
         aps.append(ap)
     return aps
 
-ans = ap(detects,targets, iou_threds=0.1)
+ans = ap(detects,targets, iou_threds=0.05)
 print(np.mean(ans))
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 ##
 import pandas as pd
@@ -416,4 +397,4 @@ fig = plt.figure()
 ax1 = fig.add_subplot(1,1,1)
 
 
-pd.read_csv(r'C:\Users\82109\PycharmProjects\PJ\5.Job\paper_recall\yolo_v1\log\version_5/metrics.csv').groupby('epoch').mean()[['trn_loss','val_loss']].plot(ax=ax1)
+# pd.read_csv(r'C:\Users\82109\PycharmProjects\PJ\5.Job\paper_recall\yolo_v1\log\version_5/metrics.csv').groupby('epoch').mean()[['trn_loss','val_loss']].plot(ax=ax1)

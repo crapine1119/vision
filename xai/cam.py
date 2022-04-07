@@ -83,4 +83,4 @@ target_layer = net.features[-1]
 model_grad = vgg_grad(net, target_layer)
 
 result_grad = gradcam(model_grad,img,label)
-result_grad.show(1)
+result_grad.show(11)

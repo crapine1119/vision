@@ -189,15 +189,16 @@ class gradcam():
         loss.backward()
 
         A = model_grad.activations[0] # 64,512,7,7
+        _,_,h,w = A.size()
         dY_dA = model_grad.gradients[0][0]  # 64,512,7,7
 
         feature_mul = nn.ReLU()(A*dY_dA).mean(dim=1) # 64,7,7
 
         # upsample feature_mul to train image
-        upsample = nn.Upsample(scale_factor=img.shape[-1]/A.size()[-1], mode='bilinear')
+        upsample = nn.Upsample(scale_factor=img.shape[-1]/w, mode='bilinear')
 
         # cam result of all classes
-        cam_result = upsample(feature_mul.view(len(label),1,7,7)).detach()
+        cam_result = upsample(feature_mul.view(len(label),1,h,w)).detach()
 
         # unnormalize img
         self.unnorm = (img.permute(0,2,3,1)*.5 +.5).numpy()

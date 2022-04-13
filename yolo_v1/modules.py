@@ -24,6 +24,8 @@ import cv2 as cv
 import json
 from PIL import Image as pil
 import albumentations as A
+from tqdm import tqdm as tqdm
+
 ##
 def seed_everything(seed: int = 42):
     torch.manual_seed(seed)
@@ -47,24 +49,26 @@ def get_items(ano_fnm, limit=1000, repeat=5):
     id2ctg = dict(ctg_df.set_index('index')['id'])
     ctg2id = dict(ctg_df.set_index('id')['index'])
     ctg2name = dict(ctg_df.set_index('id')['name'])
-    count = [0]*6
+    count = [0]*81
     label_list = []
-    for a in temp['annotations']:
+    for a in tqdm(temp['annotations']):
         image_id = a['image_id']
         bbox = np.stack(a['bbox'])
         #labels = np.array([ctg2id[l] for l in a['category_id']])
         labels = np.array([ctg2id[a['category_id']]])
-        if (labels<=5) and (count[labels.item()]<limit):
+        if (labels<=80) and (count[labels.item()]<limit):
             image_list.append({'image_id':image_id, 'bbox':bbox, 'labels':labels})
             count[labels.item()]+=1
             label_list.append(labels.item())
     image_list = np.asarray(image_list)
     label_list = np.array(label_list)
-    low_class = np.arange(1,5+1)[np.array(count[1:])<limit]
-    add = np.array([])
-    for i in low_class:
-        add = np.hstack([add, np.repeat(image_list[label_list == i], repeat - 1)])
-    return np.hstack([image_list,add]), id2ctg, ctg2name
+    if repeat>1:
+        low_class = np.arange(1,5+1)[np.array(count[1:])<limit]
+        add = np.array([])
+        for i in low_class:
+            add = np.hstack([add, np.repeat(image_list[label_list == i], repeat - 1)])
+        image_list = np.hstack([image_list,add])
+    return image_list, id2ctg, ctg2name
 
 def get_iou(bb1, bb2):
     """

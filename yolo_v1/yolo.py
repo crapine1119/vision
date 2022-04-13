@@ -17,7 +17,7 @@ from pytorch_lightning.callbacks.early_stopping import EarlyStopping
 from pytorch_lightning.callbacks import ModelCheckpoint,LearningRateMonitor
 import cv2 as cv
 import glob
-from tqdm import tqdm
+from tqdm import tqdm as tqdm
 from torchvision.ops import nms
 from yolo_v1.modules import *
 ##
@@ -26,8 +26,8 @@ seed_everything(seed=42)
 root_dir = r'D:\cv\Dataset/coco_2017/val2017/'
 ano_fnm = r'D:\cv\Dataset/coco_2017/annotations/instances_val2017.json'
 
-image_list, id2ctg, ctg2name = get_items(ano_fnm, limit=1500, repeat=5)
-
+# image_list, id2ctg, ctg2name = get_items(ano_fnm, limit=1500, repeat=5)
+image_list, id2ctg, ctg2name = get_items(ano_fnm, limit=200, repeat=0)
 ctg2id = {list(id2ctg.values())[i]:list(id2ctg.keys())[i] for i in range(len(id2ctg))}
 
 train_list_, test_list =  train_test_split(image_list,test_size=0.2)

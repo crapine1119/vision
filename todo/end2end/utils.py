@@ -275,7 +275,7 @@ def get_coco_list(ano_fnm, limit=1000, repeat=5):
         bbox = np.stack(a['bbox'])
         #labels = np.array([ctg2id[l] for l in a['category_id']])
         labels = np.array([ctg2id[a['category_id']]])
-        if (labels<=80) and (count[labels.item()]<limit):
+        if (labels<=5) and (count[labels.item()]<limit):
             image_list.append({'image_id':image_id, 'bbox':bbox, 'labels':labels})
             count[labels.item()]+=1
             label_list.append(labels.item())
@@ -298,16 +298,21 @@ def get_feature(model,key,x):
     return features
 
 class coco(Dataset):
-    def __init__(self,image_list, model, trans=None, train=True, root_dir=r'D:\cv\Dataset/coco_2017/val2017/'):
+    def __init__(self,image_list, model, key=['layer3'], trans=None, train=True, root_dir=r'D:\cv\Dataset/coco_2017/val2017/'):
         self.image_list = image_list
         self.trans = trans
         self.train = train
         self.root_dir = root_dir
-        self.key = ['layer1', 'layer2', 'layer3', 'layer4']
+        # self.key = ['layer1', 'layer2', 'layer3', 'layer4']
+        self.key = key
         self.model = model
         self.model.eval()
         for param in self.model.parameters():
             param.requires_grad_(False)
+        self.size_no = '1,2,3,4,5,6'.split(',')
+        self.grid_size = [1,2,4,7,14,28]
+        self.img_size = torch.FloatTensor([112,56,28,16,8])/224
+        self.wh_norm = torch.FloatTensor([224,112,56,28,16,8,0])/224
     def __len__(self):
         return len(self.image_list)
 
@@ -327,20 +332,32 @@ class coco(Dataset):
 
         features = get_feature(self.model, self.key, mat['image'].unsqueeze(0))
         bb_norm = torch.FloatTensor(mat['bboxes'][0])/224
-        points = get_point(56,bb_norm)
 
-
-        features['targets'] = (points,
+        #size_ind = ((bb_norm[2:].max() // self.img_size) == 0).sum() # 0~5
+        #points = get_point(self.grid_size[size_ind],size_ind,bb_norm)
+        points = get_point(28, bb_norm)
+        features['targets'] = (points,  # 그 크기에서 센터의 좌표
                                bb_norm,
                                torch.LongTensor(mat['category_ids']).squeeze())
         return features
 
 def get_point(output_size=56, bbox=[0.1,0.2,0.3,0.4]):
+    start = [0,1,1+4,5+16,21+49,70+196]
     center = bbox[:2]+bbox[2:]/2
     x,y = (output_size*center).int()
-    return torch.LongTensor([x,y])
+    output = torch.zeros((output_size,output_size))
+    output[y,x]=1.0
+    # return torch.LongTensor([start[ref]+y*output_size+x])
+    return output.bool()
 
+def coco_decode(bb_norm,size_no=['1']):
+    raw = bb_norm.clone()
+    wh_norm = torch.FloatTensor([224,112,56,28,16,8,0])/224
+    ind = torch.LongTensor([*map(lambda x:int(x)-1,size_no)])
 
+    mul = wh_norm[ind].unsqueeze(-1)
+    raw[...,2:] = bb_norm[...,2:]*mul
+    return raw
 ## modules
 class squeeze(nn.Module):
     def __init__(self):
@@ -474,8 +491,28 @@ class res(LightningModule):
 
 ##
 def IouLoss(bb1,bb2):
-    # center 동일하다 가정, wh만 가지고 구함
-    inter_w = torch.min(bb1[:, 0], bb2[:, 0])
+    # x1,y1,x2,y2
+    inter_x1 = torch.max(bb1[:, 0], bb2[:, 0])
+    inter_y1 = torch.max(bb1[:, 1], bb2[:, 1])
+    inter_x2 = torch.min(bb1[:, 2], bb2[:, 2])
+    inter_y2 = torch.min(bb1[:, 3], bb2[:, 3])
+
+    inter_x = (inter_x2 - inter_x1).clamp(min=.0)
+    inter_y = (inter_y2 - inter_y1).clamp(min=.0)
+
+    # inter_area = inter_x*inter_y
+    # uni_area =
+    #
+    # (bb1[:, 2]-bb1[:, 0])
+
+
+    bb1[:, [0, 2]].sum(dim=-1)
+    bb1[:, [1, 3]].sum(dim=-1)
+    #inter_x2 =
+    inter_w = torch.max(bb1[:, 0], bb2[:, 0])
+
+
+
     inter_h = torch.min(bb1[:, 1], bb2[:, 1])
 
     inter_w[inter_w<0] = 0
@@ -485,6 +522,10 @@ def IouLoss(bb1,bb2):
     bb1_area = torch.clamp(bb1,min=0)[:,0]*torch.clamp(bb1,min=0)[:,1]
     bb2_area = bb2[:, 0] * bb2[:, 1]
     iou = inter_area/(bb1_area+bb2_area-inter_area+1e-6)
+
+    inter_x = max(bb1[:,0],)
+
+
     return (1-iou).mean()
 
 class Loss_free(nn.Module):
@@ -674,7 +715,8 @@ class freenet(LightningModule):
         print("\n* EPOCH %s | loss :{%4.4f}" % (self.current_epoch, avg_loss))
         return {'loss': avg_loss}
 ##
-class Loss_free3(nn.Module):
+
+class Loss_mask(nn.Module):
     def __init__(self):
         super().__init__()
     #
@@ -691,51 +733,30 @@ class Loss_free3(nn.Module):
 
     def forward(self, modely, targety):
         """
-        :param modely:  batch, 10(random point), 87(TF2 + bb4 + class81)
+        :param modely:  batch, 5(random point), 85(bb4 + class81)
         :param targety: ((points) : [n,x,y], (bboxes) : [n,x1,y1,w,h], (labels) : [n,] )
         :return:
         """
-        _, target_bb, target_c = targety
-        rand_n = torch.randint(10,(target_c.size(0),))
-        ind_p = torch.eye(10)[rand_n].cuda().bool()
+        #model_p = modely
+        ind_p, _, _ = targety
 
-        loss_point = self.get_loss(modely[ind_p][:,:2], # 64(B), 1
-                                   torch.LongTensor([1]).cuda().repeat(modely.size(0)),
-                                   func='entropy')
+        pred_p = modely[1][ind_p] # 64
+        pred_bg = modely[1][~ind_p] # 64
 
-        loss_bg    = self.get_loss(modely[~ind_p][:,:2], # 64(B), 56*56 -1
-                                   torch.LongTensor([0]).cuda().repeat(modely[~ind_p].size(0)),
-                                   func='entropy')
-        # @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@ 2. bb
-
-        model_xy = modely[ind_p][:,2:4]
-        model_wh = modely[ind_p][:,4:6]
-
-        loss_xy = self.get_loss(model_xy,
-                                target_bb[:,:2]+target_bb[:,2:]/2,
-                                func='smooth')
-
-        loss_wh = self.get_loss(model_wh,
-                                target_bb[:, 2:],
-                                func='smooth')
-
+        # @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@ 1. True bb
         # loss_wh = self.get_loss(torch.sign(model_wh)* (abs(model_wh)+1e-6)**.5,
         #                         target_bb[:,2:],
         #                         func='smooth')
-        # @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@ 3. class
-        loss_c = self.get_loss(modely[ind_p][:,6:],
-                               target_c,
+        # @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@ 3. mask
+        loss_p = self.get_loss(pred_p,
+                               torch.ones(pred_p.size(0),dtype=torch.long).cuda(),
                                func='entropy')
+        loss_bg = self.get_loss(pred_bg,
+                                torch.zeros(pred_bg.size(0), dtype=torch.long).cuda(),
+                                func='entropy')
         # @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@ 4. iou (NMS)
-        """
-        bg  : .6
-        p   : .6
-        xy  : .07
-        wh  : .04
-        c   : 4
-        """
 
-        loss = loss_bg + loss_point + 5*loss_xy + 5*loss_wh + loss_c
+        loss = loss_p + .5*loss_bg
         return loss
         # return loss, {'bg':loss_bg,
         #               'p':loss_point,
@@ -743,27 +764,30 @@ class Loss_free3(nn.Module):
         #               'wy':loss_wh,
         #               'c':loss_c}
 
-class freenet3(LightningModule):
+class freenet3_1(LightningModule):
     def __init__(self, hparams):
         super().__init__()
         self.save_hyperparameters(hparams)
-        self.block = nn.Sequential(nn.Conv2d(512,1024,kernel_size=3,stride=1, padding=0,bias=False),
-                                   nn.BatchNorm2d(1024),
-                                   nn.ReLU(),
-                                   nn.Conv2d(1024, 870, kernel_size=3, stride=1, padding=0, bias=False),
-                                   nn.BatchNorm2d(870),
-                                   nn.ReLU(),
-                                   nn.AdaptiveAvgPool2d((1,1)), # 870,1,1
-                                   squeeze())
-
+        self.block4 = elwise_block(512, hparams.out_size) # 7
+        self.block3 = elwise_block(256, hparams.out_size) # 14
+        self.block2 = elwise_block(128, hparams.out_size) # 28
+        self.upsamp = nn.Upsample(scale_factor=2, mode='nearest')
+        self.conv = nn.Conv2d(128,2, kernel_size=1, bias=False)
+        #
         self.init_weights()
 
     def forward(self,x):
-        output = self.block(x['4'])
-        return output.view(-1,10,87)
+        elwise = self.block4(x['4'])
+        elwise = self.upsamp(elwise)
+        elwise = self.block3(x['3']) + elwise # elwise = 128, 14,14
+        elwise = self.upsamp(elwise)
+        elwise = self.block2(x['2']) + elwise # elwise = 128, 28,28
+        out28 = self.conv(elwise)
+        #
+        return elwise,out28.permute(0,2,3,1)
 
     def loss_f(self, modely, targety):
-        f = Loss_free3()
+        f = Loss_mask()
         return f(modely, targety)
 
     def init_weights(self):
@@ -790,6 +814,160 @@ class freenet3(LightningModule):
 
     def step(self, x):
         label = x['targets']
+        y_hat = self(x)
+        loss = self.loss_f(y_hat, label)
+        return loss
+
+    def training_step(self, batch, batch_idx):
+        loss = self.step(batch)
+        self.log('trn_loss', loss, on_step=False, on_epoch=True)
+        return {'loss': loss}
+
+    def validation_step(self, batch, batch_idx):
+        loss = self.step(batch)
+        self.log('val_loss', loss, on_step=False, on_epoch=True)
+        return {'val_loss': loss}
+
+    def validation_epoch_end(self, outputs):
+        avg_loss = torch.stack([op['val_loss'] for op in outputs]).mean()
+        print("\n* EPOCH %s | loss :{%4.4f}" % (self.current_epoch, avg_loss))
+        return {'loss': avg_loss}
+
+class bridge(TensorDataset):
+    def __init__(self, dataset, model):
+        super().__init__()
+        self.dataset = dataset
+        self.model = model
+
+    def __len__(self):
+        return len(self.dataset)
+
+    def __getitem__(self, item):
+        x = self.dataset[item]
+        for i in ['4','3','2']:
+            x[i] = x[i].unsqueeze(0)
+        target = x['targets']
+        target_mask,target_bb,target_c = target
+        target_n = (target_mask.unsqueeze(0),target_bb.unsqueeze(0),target_c.unsqueeze(0))
+        x['targets'] = target_n
+        self.model.eval()
+        with torch.no_grad():
+            feature,mask = self.model(x) # 128,28,28 // 1,28,28
+
+        score,ind = torch.max(nn.Softmax(dim=-1)(mask.squeeze()),dim=-1) # 28,28
+        score.size(), ind.size()
+        score[ind==0]=0.0
+        best = torch.argsort(score.flatten(), descending=True)[:100]
+        mask_best = torch.zeros_like(ind)
+        for b in best:
+            mask_best[b//28,b%28] = 1.0
+        if (target_mask & mask_best.bool()).sum()==0:
+            target_false = torch.zeros_like(ind)
+            target_false[best[-1]//28,best[-1]%28] = 1.0
+            return {'feature'   : feature.squeeze()[:,mask_best.bool()], # 100
+                    'target'    : (target_false[mask_best.bool()],torch.FloatTensor([0.0,0.0,0.0,0.0]),torch.zeros((1,)).long())}
+
+        return {'feature'   : feature.squeeze()[:,mask_best.bool()], # 100
+                'target'    : (target_mask[mask_best.bool()],target_bb,target_c.unsqueeze(0))}
+
+class Loss_last(nn.Module):
+    def __init__(self):
+        super().__init__()
+    #
+    def get_loss(self, modely, targety, func='smooth'):
+        if func=='mse':
+            f = nn.MSELoss()
+        elif func=='entropy':
+            f = nn.CrossEntropyLoss()
+        elif func == 'smooth':
+            f = nn.SmoothL1Loss()
+        elif func == 'iou':
+            f = IouLoss
+        return f(modely,targety)
+
+    def forward(self, modely, targety):
+        """
+        :param modely:  b, 10, 100
+        :param targety: p(b,100), bb(b,4), c(b,1+cls)
+        :return:
+        """
+
+        ind_p, target_bb, target_c = targety
+        ind_p = ind_p.bool()
+        pred_bb = modely[ind_p][:,:4] # b, 4
+        pred_bg = modely[~ind_p][:,4:] # b*99, 6
+        pred_c = modely[ind_p][:,4:]  # b, 6
+        # @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@ 1. True bb
+        loss_bb = self.get_loss(pred_bb,
+                                target_bb,
+                                func='smooth')
+        # loss_wh = self.get_loss(torch.sign(model_wh)* (abs(model_wh)+1e-6)**.5,
+        #                         target_bb[:,2:],
+        #                         func='smooth')
+        # @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@ 2. bg, class
+        loss_bg = self.get_loss(pred_bg,
+                                torch.zeros(pred_bg.size(0), dtype=torch.long).cuda(),
+                                func='entropy')
+
+        loss_c = self.get_loss(pred_c,
+                               target_c.squeeze(),
+                               func='entropy')
+
+        loss = loss_bb + .1*loss_bg + loss_c
+        return loss
+        # return loss, {'bg':loss_bg,
+        #               'p':loss_point,
+        #               'xy':loss_xy,
+        #               'wy':loss_wh,
+        #               'c':loss_c}
+
+class freenet3_2(LightningModule):
+    def __init__(self, hparams):
+        super().__init__()
+        self.save_hyperparameters(hparams)
+
+        self.conv1 = nn.Sequential(nn.Conv1d(128,10, kernel_size=1, bias=False),
+                                   nn.BatchNorm1d(10),
+                                   nn.ReLU())
+        self.fc = nn.Sequential(nn.Dropout(0.7),
+                                nn.Linear(1000,1000, bias=True))
+        #
+        self.init_weights()
+
+    def forward(self,x):
+        output = self.conv1(x['feature']) # b,10b100
+        output = output.view(-1,1000)
+        output = self.fc(output)
+        return output.view(-1,10,100).permute(0,2,1)
+
+    def loss_f(self, modely, targety):
+        f = Loss_last()
+        return f(modely, targety)
+
+    def init_weights(self):
+        for m in self.modules():
+            if isinstance(m,nn.Conv2d):
+                nn.init.kaiming_normal_(m.weight)
+                if m.bias:
+                    nn.init.constant_(m.bias,0)
+            elif isinstance(m, nn.BatchNorm2d):
+                nn.init.constant_(m.weight, 1)
+                nn.init.constant_(m.bias, 0)
+            elif isinstance(m, nn.Linear):
+                nn.init.kaiming_uniform_(m.weight)
+                nn.init.constant_(m.bias, 0)
+
+    def configure_optimizers(self):
+        optimizer = opt.AdamW(self.parameters(), lr=self.hparams.lr, weight_decay=self.hparams.wd)
+        scheduler = lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.1,
+                                                   patience=self.hparams.lr_patience,
+                                                   min_lr=self.hparams.lr*.001)
+        return {"optimizer": optimizer,
+                "lr_scheduler": {"scheduler": scheduler,
+                                 "monitor": "val_loss"}}
+
+    def step(self, x):
+        label = x['target']
         y_hat = self(x)
         loss = self.loss_f(y_hat, label)
         return loss

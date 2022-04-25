@@ -1,6 +1,4 @@
-
-
-from object_detection.rc import *
+from rcnn.utils import *
 ##
 seed_everything(seed=42)
 
@@ -195,6 +193,7 @@ plt.plot(total_acc);plt.plot(total_acc_v);plt.title('Acc')
 test = next(iter(tst_loader))
 
 from sklearn.metrics import f1_score
+
 def acc(pred,real):
     real = real.cpu()
     pred = torch.argmax(pred, dim=1).cpu()

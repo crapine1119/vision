@@ -9,10 +9,10 @@ from glob import glob as glob
 #
 import torch
 from torch import nn
-from torch import optim as opt
 from torch.utils.data import DataLoader,Dataset, TensorDataset
 from torchvision import transforms
 from torchvision import models
+from torch import optim as opt
 import torch.optim.lr_scheduler as lr_scheduler
 #
 from pytorch_lightning import LightningModule

@@ -173,7 +173,7 @@ class cam():
     def show(self,item):
         plt.figure(figsize=[9, 9])
         plt.imshow(self.unnorm[item], alpha=1.0)
-        c = plt.contourf(self.final[item, 0].numpy(), cmap='jet', levels=np.arange(.5, 1+.001, .025), alpha=.6)
+        c = plt.contourf(self.final[item, 0].numpy(), cmap='jet', levels=np.arange(.75, 1+.001, .025), alpha=.6)
         c.cmap.set_under('b')
         plt.colorbar(c)
 #
@@ -212,6 +212,8 @@ class gradcam():
     def show(self,item):
         plt.figure(figsize=[9, 9])
         plt.imshow(self.unnorm[item], alpha=1.0)
-        c = plt.contourf(self.final[item, 0].numpy(), cmap='jet', levels=np.arange(.5, 1+.001, .025), alpha=.6)
+        c = plt.contourf(self.final[item, 0].numpy(), cmap='jet', levels=np.arange(.75, 1+.001, .025), alpha=.6)
         c.cmap.set_under('b')
         plt.colorbar(c)
+
+

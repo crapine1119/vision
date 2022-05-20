@@ -35,7 +35,7 @@ dset_sts = pd.DataFrame(dset_sts,columns=['연봉','연차'])
 center based cluster
 중심점의 개수를 설정해주면, 그 중심을 기반으로 거리가 최소화되는 군집을 나눔
 """
-model_km = kmean(n_clusters=4, random_state=42)
+model_km = kmean(n_clusters=5, random_state=42)
 model_km.fit(dset_sts)
 dset_sts['kmean'] = model_km.fit_predict(dset_sts)
 print('kmean : %s'%dset_sts['kmean'].unique())
@@ -47,7 +47,7 @@ density based cluster
 타원의 반경(eps)와 그 안에 있는 최소 점의 개수(min sample)을 파라미터로 가진다.
 사람이 설정해야된다는 단점이 존재
 """
-model_db = dbscan(eps=0.3, min_samples=4)
+model_db = dbscan(eps=0.3, min_samples=5)
 model_db.fit(dset_sts)
 dset_sts['dbscan'] = model_db.fit_predict(dset_sts)
 print('dbscan : %s'%dset_sts['dbscan'].unique())
@@ -60,7 +60,7 @@ mutual reachability (distance를 noisy robust하게 만드는 방법)를 구하�
 트리를 이용해서 클러스터를 구축하고, 알고리즘에 의해 안정적인 클러스터를 선택한다.
 
 """
-model_hdb = hdbscan.HDBSCAN(min_cluster_size=4, gen_min_span_tree=True)
+model_hdb = hdbscan.HDBSCAN(min_cluster_size=5, gen_min_span_tree=True)
 model_hdb.fit(dset_sts)
 dset_sts['hdbscan'] = model_db.fit_predict(dset_sts)
 print('hdbscan : %s'%dset_sts['hdbscan'].unique())

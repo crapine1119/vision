@@ -16,7 +16,7 @@ import cv2 as cv
 from PIL import Image as pil
 from tqdm import tqdm as tqdm
 from xai.utils import *
-## VOD Image load
+## VOC Image load
 seed_everything()
 
 fdir = r'D:\cv\Dataset\VOCtrainval_06-Nov-2007\VOCdevkit\VOC2007'
@@ -50,7 +50,7 @@ for ep in range(max_epochs):
         optimizer.zero_grad()
         x = batch['imgs'].cuda()
         target = batch['labels'].cuda() # test니까 하나만 학습
-        pred = model(x)
+        pred = model_cam(x)
         loss = criterion(pred,target)
         loss.backward()
         optimizer.step()
@@ -65,9 +65,10 @@ for ep in range(max_epochs):
     del wrap
     gc.collect()
 plt.plot(loss_train)
+# batch
+for batch in trn_loader:
+    break
 ## get cam
-batch = next(iter(trn_loader))
-
 img = batch['imgs']
 label = batch['labels']
 
@@ -83,4 +84,4 @@ target_layer = net.features[-1]
 model_grad = vgg_grad(net, target_layer)
 
 result_grad = gradcam(model_grad,img,label)
-result_grad.show(11)
+result_grad.show(1)

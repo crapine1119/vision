@@ -122,10 +122,11 @@ def get_point(output_size=56, bbox=[0.1,0.2,0.3,0.4], label=0, mask=True, segmen
         target = torch.zeros((output_size, output_size))
         if segment:
             output[y1:y2+1, x1:x2+1, 1] = 1.0
+            output[y,x,0] = .01 # center
             target[y1:y2+1, x1:x2+1] = label
         else:
             output[y,x,1]=1.0
-        return output,target.long()
+        return output, target.long()
     #return torch.LongTensor([x,y])
     # return torch.LongTensor([start[ref]+y*output_size+x])
 
@@ -154,6 +155,7 @@ class elwise_block(nn.Module):
     def forward(self, x):
         x = self.add(x)
         return x
+
 ## model
 class Loss_mask2(nn.Module):
     def __init__(self, alpha=0.25, gamma = 2):
@@ -176,13 +178,15 @@ class Loss_mask2(nn.Module):
         :param targety: (mask, bb, label) {b,28,28,x}
         :return:
         """
-        model_c = modely
-        target_p, _, target_c = targety
+        model_c,model_bb = modely
+        target_p, target_bb, target_c = targety
         """
         model_p   : b, 28,28,2
         target_p  : b, 28,28,2
         model_c   : b, 28,28,5
         target_c  : b
+        model_bb  : b, 28,28,2 (prob, w,h)
+        target_bb : b,4 (x1,y1,w,h)  
         """
 
         _, ind_p = torch.max(target_p,dim=-1)
@@ -194,7 +198,14 @@ class Loss_mask2(nn.Module):
         loss_un = self.get_loss(model_c[unknown],
                                 torch.zeros(unknown.sum()).cuda().long(),
                                 func='entropy')
-        loss = loss_c + loss_un
+
+        ind_center = target_p[...,0]==.01
+        loss_bb = self.get_loss(model_bb[ind_center.detach().bool()],
+                                target_bb[...,2:],
+                                func='mse')
+        # 잘못된 point에서 C를 검출했을 경우의 페널티가 필요함 : Add Center loss (uclidean distance)
+
+        loss = loss_c + loss_un + loss_bb
         return loss
 
 class toy2(LightningModule):
@@ -216,6 +227,17 @@ class toy2(LightningModule):
         self.upsamp = nn.Upsample(scale_factor=2, mode='nearest')
 
         self.cls = nn.Conv2d(hparams.out_size, self.hparams.num_class+1, kernel_size=1, bias=False)
+        # added for regression
+        self.reg = nn.Sequential(nn.BatchNorm2d(self.hparams.num_class+1),
+                                 nn.ReLU(),
+                                 nn.Conv2d(self.hparams.num_class+1, self.hparams.num_class+1, kernel_size=1, bias=False),
+                                 nn.BatchNorm2d(self.hparams.num_class + 1),
+                                 nn.ReLU(),
+                                 nn.Conv2d(self.hparams.num_class + 1, self.hparams.num_class + 1, kernel_size=1,bias=False),
+                                 nn.BatchNorm2d(self.hparams.num_class + 1),
+                                 nn.ReLU(),
+                                 nn.Conv2d(self.hparams.num_class+1, 2, kernel_size=1, bias=False),
+                                 nn.ReLU()) # prob + wh
         #
         self.init_weights()
 
@@ -231,8 +253,9 @@ class toy2(LightningModule):
         elwise = self.conv2(elwise)
 
         out_c = self.cls(elwise)  # n,5,28,28
+        out_r = self.reg(out_c)
         #
-        return out_c.permute(0,2,3,1)
+        return out_c.permute(0,2,3,1), out_r.permute(0,2,3,1)
 
     def loss_f(self, modely, targety):
         f = Loss_mask2(alpha=self.hparams.alpha, gamma=self.hparams.gamma)
@@ -282,9 +305,7 @@ class toy2(LightningModule):
         return {'loss': avg_loss}
 
 ## visualize
-
-def visualize(model, dataset, label_list, key, id2name, save, save_dir,
-              resize_n=672 ,num_class=4, pick=1, top_n=.0, c_threshold=.4, root_dir = r'D:\cv\Dataset/coco_2017/val2017/'):
+def visualize(model, dataset, label_list, key, id2name, save, save_dir, resize_n=672 ,num_class=4, pick=1, top_n=.0, c_threshold=.4, root_dir = r'D:\cv\Dataset/coco_2017/val2017/'):
     jet = plt.get_cmap('Set3', num_class+1)
     my_cmap = jet.colors[:num_class+1,:3]
     my_cmap[0] = [1,1,1]
@@ -292,6 +313,7 @@ def visualize(model, dataset, label_list, key, id2name, save, save_dir,
     max_n = len(label_list)
     # pick randomly
     for n in np.random.randint(0, max_n, pick):
+##
         dset = dataset[n]
         info = label_list[n]
         for k in key:
@@ -302,7 +324,7 @@ def visualize(model, dataset, label_list, key, id2name, save, save_dir,
         model.eval()
         with torch.no_grad():
             output = model(dset)
-        output_c = output     # output_p, output_c = output # toy1
+        output_c,output_bb = output     # output_p, output_c = output # toy1
 
         # classification
         out_score_c, out_c = torch.max(nn.Softmax(dim=-1)(output_c[0]), dim=-1)
@@ -323,7 +345,7 @@ def visualize(model, dataset, label_list, key, id2name, save, save_dir,
 
         # raw img
         img_raw = cv.imread(r'%s/%012d.jpg' % (root_dir, info['image_id']))
-        img = A.Resize(resize_n,resize_n)(image=img_raw)['image']/255
+        img = cv.resize(img_raw,(resize_n,resize_n))/255
         h,w = resize_n,resize_n
 
         # upsample heatmap
@@ -350,14 +372,30 @@ def visualize(model, dataset, label_list, key, id2name, save, save_dir,
             if not ind_c.sum()==0:
                 score = pred_score_up[ind_c].mean().item()
 
-                roi_x = xx[ind_c]
-                roi_y = yy[ind_c]
-                x1, y1 = max(roi_x.min(),1), max(1,roi_y.min())
-                x2, y2 = min(roi_x.max(),resize_n-2), min(roi_y.max(),resize_n-2)
+                center = (pred_score * (pred_c==i)).argmax()
+                cx,cy = center%28,center//28
 
-                img_h = cv.rectangle(img_h, (x1,y1), (x2,y2), color=[0, 1, 0], thickness=1)
-                img_h = cv.putText(img_h, '%s : %2.3f'%(id2name[i],score), (x1, y1-20), fontFace=cv.FONT_ITALIC,
-                                   fontScale=0.8, color=[0, 1, 0], thickness=2)
+                pred_bb = output_bb.squeeze()[cy,cx].clip(min=0).numpy()
+                if (pred_bb==0).sum()==0:
+                    # bb by regress
+                    cxy = np.array([cx * resize_n / 28, cy * resize_n / 28])
+                    bb1 = np.clip(cxy - (pred_bb / 2 * resize_n), a_min=0, a_max=resize_n).astype(int)
+                    bb2 = np.clip(cxy + (pred_bb / 2 * resize_n), a_min=0, a_max=resize_n).astype(int)
+
+
+                    img = cv.rectangle(img, bb1, bb2, color=[0, 1, 0], thickness=2)
+                    img = cv.putText(img, '%s' % (id2name[i]), (bb1[0], bb1[1] - 20), fontFace=cv.FONT_ITALIC,
+                                     fontScale=1.0, color=[0, 1, 0], thickness=2)
+                else:print('Regress Fail',pred_bb)
+                # bb by segment
+                # roi_x = xx[ind_c]
+                # roi_y = yy[ind_c]
+                # x1, y1 = max(roi_x.min(),1), max(1,roi_y.min())
+                # x2, y2 = min(roi_x.max(),resize_n-2), min(roi_y.max(),resize_n-2)
+                #
+                # img_h = cv.rectangle(img_h, (x1,y1), (x2,y2), color=[0, 1, 0], thickness=1)
+                # img_h = cv.putText(img_h, '%s : %2.3f'%(id2name[i],score), (x1, y1-20), fontFace=cv.FONT_ITALIC,
+                #                    fontScale=0.8, color=[0, 1, 0], thickness=2)
 
         # imshow & write
         #cv.imshow('%s_%s' % (id2name[info['labels'][0]], n), img_h)
@@ -368,16 +406,17 @@ def visualize(model, dataset, label_list, key, id2name, save, save_dir,
         ax1 = fig.add_subplot(121)
         ax2 = fig.add_subplot(122)
         ax1.imshow(img_h[...,::-1])
+        # ax1.imshow(cv.resize(img_raw,(resize_n,resize_n))[...,::-1])
         #3
         ax2.imshow(img[...,::-1])
         # ax2.imshow(pred_score_up.numpy(), alpha=0.6, cmap='Reds')
 
-        if pred_score_up.sum()>2:
+        if (pred_score_up.sum()>0) & (pred_score_up.max()>c_threshold):
             ax2.contourf(pred_score_up.numpy(),
-                         alpha=0.5,
-                         levels=np.arange(c_threshold*.5,
+                         alpha=0.2,
+                         levels=np.arange(c_threshold*.75,
                                           pred_score_up.numpy().max(),
-                                          (pred_score_up.numpy().max()-c_threshold)/50),
+                                          (pred_score_up.numpy().max()-c_threshold*.75)/20),
                          cmap='jet')
         #
         cax = fig.add_axes([.125,.072,.775,.03])

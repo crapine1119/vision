@@ -11,7 +11,7 @@ class custom(Dataset):
 
         self.trans = transforms.Compose([transforms.Resize((64,64)),
                                          transforms.ToTensor(),
-                                         transforms.Normalize([0.5,0.5,0.5],[0.5,0.5,0.5])])
+                                         transforms.Normalize(mean=[0.5,0.5,0.5],std=[0.5,0.5,0.5])])
     def __len__(self):
         return len(self.dset)
     def __getitem__(self, item):
@@ -40,23 +40,23 @@ class Generator(nn.Module):
         nc = 3
         self.main = nn.Sequential(
             # input is Z, going into a convolution
-            nn.ConvTranspose2d(nz, ngf * 8, 4, 1, 0, bias=False),
+            nn.ConvTranspose2d(nz, ngf * 8, 4, stride=1, padding=0, bias=False),
             nn.BatchNorm2d(ngf * 8),
-            nn.ReLU(True),
+            nn.ReLU(),
             # state size. (ngf*8) x 4 x 4
-            nn.ConvTranspose2d(ngf * 8, ngf * 4, 4, 2, 1, bias=False),
+            nn.ConvTranspose2d(ngf * 8, ngf * 4, 4, stride=2, padding=1, bias=False),
             nn.BatchNorm2d(ngf * 4),
-            nn.ReLU(True),
+            nn.ReLU(),
             # state size. (ngf*4) x 8 x 8
-            nn.ConvTranspose2d(ngf * 4, ngf * 2, 4, 2, 1, bias=False),
+            nn.ConvTranspose2d(ngf * 4, ngf * 2, 4, stride=2, padding=1, bias=False),
             nn.BatchNorm2d(ngf * 2),
-            nn.ReLU(True),
+            nn.ReLU(),
             # state size. (ngf*2) x 16 x 16
-            nn.ConvTranspose2d(ngf * 2, ngf, 4, 2, 1, bias=False),
+            nn.ConvTranspose2d(ngf * 2, ngf, 4, stride=2, padding=1, bias=False),
             nn.BatchNorm2d(ngf),
-            nn.ReLU(True),
+            nn.ReLU(),
             # state size. (ngf) x 32 x 32
-            nn.ConvTranspose2d(ngf, nc, 4, 2, 1, bias=False),
+            nn.ConvTranspose2d(ngf, nc, 4, stride=2, padding=1, bias=False),
             nn.Tanh()
             # state size. (nc) x 64 x 64
         )
